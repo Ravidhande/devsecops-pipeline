@@ -8,3 +8,5 @@ kubectl
 .env
 __pycache__/
 *.pyc
+trivy-reports/
+owasp-reports/
