@@ -100,28 +100,25 @@ pipeline {
         }
 
         stage('🚀 Deploy to EKS') {
-            steps {
-                echo 'Deploying to Kubernetes...'
-                sh """
-                    aws eks update-kubeconfig \
-                    --region ${AWS_REGION} \
-                    --name ${CLUSTER_NAME}
+    steps {
+        echo 'Deploying to Kubernetes...'
+        sh '''
+            aws eks update-kubeconfig \
+            --region ap-south-1 \
+            --name devsecops-cluster
 
-                    # Replace ACCOUNT_ID in deployment.yaml
-                    sed -i 's/ACCOUNT_ID/${AWS_ACCOUNT_ID}/g' k8s/deployment.yaml
+            kubectl apply -f k8s/deployment.yaml
+            kubectl apply -f k8s/service.yaml
+            kubectl apply -f k8s/hpa.yaml
 
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-                    kubectl apply -f k8s/hpa.yaml
+            kubectl set image deployment/devsecops-app \
+            devsecops-app=''' + env.ECR_REPO + ':' + env.IMAGE_TAG + '''
 
-                    kubectl set image deployment/devsecops-app \
-                    devsecops-app=${ECR_REPO}:${IMAGE_TAG}
-
-                    kubectl rollout status deployment/devsecops-app
-                """
-                echo '✅ Deployed to EKS!'
-            }
-        }
+            kubectl rollout status deployment/devsecops-app
+        '''
+        echo '✅ Deployed to EKS!'
+    }
+}
 
         stage('📊 Deploy Monitoring') {
             steps {
