@@ -13,147 +13,96 @@ pipeline {
 
     stages {
 
-        stage('📥 Checkout Code') {
+        stage('Checkout Code') {
             steps {
-                echo 'Pulling latest code from GitHub...'
+                echo 'Pulling latest code...'
                 checkout scm
             }
         }
 
-        stage('🔍 SonarQube Code Analysis') {
+        stage('SonarQube Scan') {
             steps {
                 echo 'Running SonarQube scan...'
-                sh '''
-                    docker run --rm \
-                    --network="host" \
-                    -e SONAR_HOST_URL="http://localhost:9000" \
-                    -e SONAR_TOKEN=''' + env.SONAR_TOKEN + ''' \
-                    -v "$(pwd):/usr/src" \
-                    sonarsource/sonar-scanner-cli \
-                    -Dsonar.projectKey=devsecops-pipeline \
-                    -Dsonar.sources=app \
-                    -Dsonar.language=py
-                '''
-                echo '✅ SonarQube scan completed!'
+                sh 'docker run --rm --network=host -e SONAR_HOST_URL=http://localhost:9000 -e SONAR_TOKEN=' + env.SONAR_TOKEN + ' -v $(pwd):/usr/src sonarsource/sonar-scanner-cli -Dsonar.projectKey=devsecops-pipeline -Dsonar.sources=app -Dsonar.language=py'
+                echo 'SonarQube scan completed!'
             }
         }
 
-        stage('🛡️ OWASP Dependency Check') {
+        stage('OWASP Check') {
             steps {
-                echo 'Running OWASP dependency scan...'
-                sh '''
-                    mkdir -p owasp-reports
-                    docker run --rm \
-                    -v "$(pwd):/src" \
-                    -v "$(pwd)/owasp-reports:/report" \
-                    owasp/dependency-check \
-                    --scan /src/app \
-                    --format HTML \
-                    --out /report \
-                    --project "devsecops-pipeline" \
-                    --disableYarnAudit \
-                    --disableNodeAudit \
-                    || true
-                '''
-                echo '✅ OWASP scan completed!'
+                echo 'Running OWASP scan...'
+                sh 'mkdir -p owasp-reports'
+                sh 'docker run --rm -v $(pwd):/src -v $(pwd)/owasp-reports:/report owasp/dependency-check --scan /src/app --format HTML --out /report --project devsecops-pipeline --disableYarnAudit --disableNodeAudit || true'
+                echo 'OWASP scan completed!'
             }
         }
 
-        stage('🐳 Build Docker Image') {
+        stage('Build Docker Image') {
             steps {
                 echo 'Building Docker image...'
-                script {
-                    sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
-                    sh "docker tag ${ECR_REPO}:${IMAGE_TAG} ${ECR_REPO}:latest"
-                }
-                echo '✅ Docker image built!'
+                sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
+                sh "docker tag ${ECR_REPO}:${IMAGE_TAG} ${ECR_REPO}:latest"
+                echo 'Docker image built!'
             }
         }
 
-        stage('🔒 Trivy Security Scan') {
+        stage('Trivy Security Scan') {
             steps {
-                echo 'Scanning Docker image for vulnerabilities...'
-                sh '''
-                    mkdir -p trivy-reports
-                    docker run --rm \
-                    -v /var/run/docker.sock:/var/run/docker.sock \
-                    -v "$(pwd)/trivy-reports:/reports" \
-                    aquasec/trivy:latest image \
-                    --exit-code 0 \
-                    --severity HIGH,CRITICAL \
-                    --format table \
-                    --output /reports/trivy-report.txt \
-                    ''' + env.ECR_REPO + ':' + env.IMAGE_TAG + '''
-                '''
-                echo '✅ Trivy scan completed!'
+                echo 'Scanning image for vulnerabilities...'
+                sh 'mkdir -p trivy-reports'
+                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/trivy-reports:/reports aquasec/trivy:latest image --exit-code 0 --severity HIGH,CRITICAL --format table ' + env.ECR_REPO + ':' + env.IMAGE_TAG + ' || true'
+                echo 'Trivy scan completed!'
             }
         }
 
-        stage('☁️ Push to AWS ECR') {
+        stage('Push to AWS ECR') {
             steps {
                 echo 'Pushing to ECR...'
-                script {
-                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}"
-                    sh "docker push ${ECR_REPO}:${IMAGE_TAG}"
-                    sh "docker push ${ECR_REPO}:latest"
-                }
-                echo '✅ Image pushed to ECR!'
+                sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}"
+                sh "docker push ${ECR_REPO}:${IMAGE_TAG}"
+                sh "docker push ${ECR_REPO}:latest"
+                echo 'Image pushed to ECR!'
             }
         }
 
-        stage('🚀 Deploy to EKS') {
+        stage('Deploy to EKS') {
             steps {
                 echo 'Deploying to Kubernetes...'
-                script {
-                    sh "aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}"
-                    sh "kubectl apply -f k8s/deployment.yaml"
-                    sh "kubectl apply -f k8s/service.yaml"
-                    sh "kubectl apply -f k8s/hpa.yaml"
-                    sh "kubectl set image deployment/devsecops-app devsecops-app=${ECR_REPO}:${IMAGE_TAG}"
-                    sh "kubectl rollout status deployment/devsecops-app"
-                }
-                echo '✅ Deployed to EKS!'
+                sh "aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}"
+                sh "kubectl apply -f k8s/deployment.yaml"
+                sh "kubectl apply -f k8s/service.yaml"
+                sh "kubectl apply -f k8s/hpa.yaml"
+                sh "kubectl set image deployment/devsecops-app devsecops-app=${ECR_REPO}:${IMAGE_TAG}"
+                sh "kubectl rollout status deployment/devsecops-app"
+                echo 'Deployed to EKS!'
             }
         }
 
-        stage('📊 Deploy Monitoring') {
+        stage('Deploy Monitoring') {
             steps {
-                echo 'Setting up Prometheus + Grafana...'
-                script {
-                    sh "kubectl apply -f k8s/monitoring.yaml || true"
-                    sh "kubectl get pods -n monitoring"
-                }
-                echo '✅ Monitoring stack deployed!'
+                echo 'Deploying monitoring stack...'
+                sh "kubectl apply -f k8s/monitoring.yaml || true"
+                sh "kubectl get pods -n monitoring"
+                echo 'Monitoring deployed!'
             }
         }
 
-        stage('✅ Verify Deployment') {
+        stage('Verify Deployment') {
             steps {
-                echo 'Verifying everything is running...'
-                script {
-                    sh "kubectl get pods"
-                    sh "kubectl get services"
-                    sh "kubectl get hpa"
-                }
+                echo 'Verifying deployment...'
+                sh "kubectl get pods"
+                sh "kubectl get services"
+                sh "kubectl get hpa"
             }
         }
     }
 
-  post {
-    always {
-        script {
-            try {
-                archiveArtifacts artifacts: 'trivy-reports/*.txt', allowEmptyArchive: true
-                archiveArtifacts artifacts: 'owasp-reports/*.html', allowEmptyArchive: true
-            } catch (err) {
-                echo "Archive step skipped: ${err}"
-            }
+    post {
+        success {
+            echo 'Pipeline succeeded! App is secure and live!'
         }
-    }
-    success {
-        echo '🎉 DevSecOps Pipeline succeeded!'
-    }
-    failure {
-        echo '❌ Pipeline failed! Check logs above.'
+        failure {
+            echo 'Pipeline failed! Check logs above.'
+        }
     }
 }
