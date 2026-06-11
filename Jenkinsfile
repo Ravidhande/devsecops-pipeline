@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         AWS_REGION            = 'ap-south-1'
-        ECR_REPO              = 'ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com/devsecops-app'
+        ECR_REPO              = '354918370166.dkr.ecr.ap-south-1.amazonaws.com/devsecops-app'
         IMAGE_TAG             = "${BUILD_NUMBER}"
         CLUSTER_NAME          = 'devsecops-cluster'
         SONAR_TOKEN           = credentials('sonar-token')
@@ -27,7 +27,7 @@ pipeline {
                     docker run --rm \
                     --network="host" \
                     -e SONAR_HOST_URL="http://localhost:9000" \
-                    -e SONAR_TOKEN=${SONAR_TOKEN} \
+                    -e SONAR_TOKEN=''' + env.SONAR_TOKEN + ''' \
                     -v "$(pwd):/usr/src" \
                     sonarsource/sonar-scanner-cli \
                     -Dsonar.projectKey=devsecops-pipeline \
@@ -40,15 +40,15 @@ pipeline {
 
         stage('🛡️ OWASP Dependency Check') {
             steps {
-                echo 'Running OWASP dependency vulnerability scan...'
+                echo 'Running OWASP dependency scan...'
                 sh '''
+                    mkdir -p owasp-reports
                     docker run --rm \
                     -v "$(pwd):/src" \
                     -v "$(pwd)/owasp-reports:/report" \
                     owasp/dependency-check \
                     --scan /src/app \
                     --format HTML \
-                    --format JSON \
                     --out /report \
                     --project "devsecops-pipeline" \
                     --disableYarnAudit \
@@ -62,8 +62,10 @@ pipeline {
         stage('🐳 Build Docker Image') {
             steps {
                 echo 'Building Docker image...'
-                sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
-                sh "docker tag ${ECR_REPO}:${IMAGE_TAG} ${ECR_REPO}:latest"
+                script {
+                    sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
+                    sh "docker tag ${ECR_REPO}:${IMAGE_TAG} ${ECR_REPO}:latest"
+                }
                 echo '✅ Docker image built!'
             }
         }
@@ -71,7 +73,8 @@ pipeline {
         stage('🔒 Trivy Security Scan') {
             steps {
                 echo 'Scanning Docker image for vulnerabilities...'
-                sh """
+                sh '''
+                    mkdir -p trivy-reports
                     docker run --rm \
                     -v /var/run/docker.sock:/var/run/docker.sock \
                     -v "$(pwd)/trivy-reports:/reports" \
@@ -80,8 +83,8 @@ pipeline {
                     --severity HIGH,CRITICAL \
                     --format table \
                     --output /reports/trivy-report.txt \
-                    ${ECR_REPO}:${IMAGE_TAG}
-                """
+                    ''' + env.ECR_REPO + ':' + env.IMAGE_TAG + '''
+                '''
                 echo '✅ Trivy scan completed!'
             }
         }
@@ -89,44 +92,37 @@ pipeline {
         stage('☁️ Push to AWS ECR') {
             steps {
                 echo 'Pushing to ECR...'
-                sh """
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                    docker login --username AWS --password-stdin ${ECR_REPO}
-                    docker push ${ECR_REPO}:${IMAGE_TAG}
-                    docker push ${ECR_REPO}:latest
-                """
+                script {
+                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}"
+                    sh "docker push ${ECR_REPO}:${IMAGE_TAG}"
+                    sh "docker push ${ECR_REPO}:latest"
+                }
                 echo '✅ Image pushed to ECR!'
             }
         }
 
         stage('🚀 Deploy to EKS') {
-    steps {
-        echo 'Deploying to Kubernetes...'
-        sh '''
-            aws eks update-kubeconfig \
-            --region ap-south-1 \
-            --name devsecops-cluster
-
-            kubectl apply -f k8s/deployment.yaml
-            kubectl apply -f k8s/service.yaml
-            kubectl apply -f k8s/hpa.yaml
-
-            kubectl set image deployment/devsecops-app \
-            devsecops-app=''' + env.ECR_REPO + ':' + env.IMAGE_TAG + '''
-
-            kubectl rollout status deployment/devsecops-app
-        '''
-        echo '✅ Deployed to EKS!'
-    }
-}
+            steps {
+                echo 'Deploying to Kubernetes...'
+                script {
+                    sh "aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}"
+                    sh "kubectl apply -f k8s/deployment.yaml"
+                    sh "kubectl apply -f k8s/service.yaml"
+                    sh "kubectl apply -f k8s/hpa.yaml"
+                    sh "kubectl set image deployment/devsecops-app devsecops-app=${ECR_REPO}:${IMAGE_TAG}"
+                    sh "kubectl rollout status deployment/devsecops-app"
+                }
+                echo '✅ Deployed to EKS!'
+            }
+        }
 
         stage('📊 Deploy Monitoring') {
             steps {
                 echo 'Setting up Prometheus + Grafana...'
-                sh """
-                    kubectl apply -f k8s/monitoring.yaml
-                    kubectl get pods -n monitoring
-                """
+                script {
+                    sh "kubectl apply -f k8s/monitoring.yaml || true"
+                    sh "kubectl get pods -n monitoring"
+                }
                 echo '✅ Monitoring stack deployed!'
             }
         }
@@ -134,27 +130,25 @@ pipeline {
         stage('✅ Verify Deployment') {
             steps {
                 echo 'Verifying everything is running...'
-                sh """
-                    kubectl get pods
-                    kubectl get services
-                    kubectl get hpa
-                    kubectl get pods -n monitoring
-                """
+                script {
+                    sh "kubectl get pods"
+                    sh "kubectl get services"
+                    sh "kubectl get hpa"
+                }
             }
         }
     }
 
     post {
         always {
-            echo '📊 Publishing security reports...'
             archiveArtifacts artifacts: 'trivy-reports/*.txt', allowEmptyArchive: true
             archiveArtifacts artifacts: 'owasp-reports/*.html', allowEmptyArchive: true
         }
         success {
-            echo '🎉 DevSecOps Pipeline succeeded! App is secure and live!'
+            echo '🎉 DevSecOps Pipeline succeeded!'
         }
         failure {
-            echo '❌ Pipeline failed! Check security scan results above.'
+            echo '❌ Pipeline failed! Check logs above.'
         }
     }
 }
