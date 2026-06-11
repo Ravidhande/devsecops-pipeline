@@ -139,16 +139,21 @@ pipeline {
         }
     }
 
-    post {
-        always {
-            archiveArtifacts artifacts: 'trivy-reports/*.txt', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'owasp-reports/*.html', allowEmptyArchive: true
+  post {
+    always {
+        script {
+            try {
+                archiveArtifacts artifacts: 'trivy-reports/*.txt', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'owasp-reports/*.html', allowEmptyArchive: true
+            } catch (err) {
+                echo "Archive step skipped: ${err}"
+            }
         }
-        success {
-            echo '🎉 DevSecOps Pipeline succeeded!'
-        }
-        failure {
-            echo '❌ Pipeline failed! Check logs above.'
-        }
+    }
+    success {
+        echo '🎉 DevSecOps Pipeline succeeded!'
+    }
+    failure {
+        echo '❌ Pipeline failed! Check logs above.'
     }
 }
